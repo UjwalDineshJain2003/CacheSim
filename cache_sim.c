@@ -22,21 +22,11 @@ struct decoded_inst {
 typedef struct cache cache;
 typedef struct decoded_inst decoded;
 
-
-/*
- * This is a very basic C cache simulator.
- * The input files for each "Core" must be named core_1.txt, core_2.txt, core_3.txt ... core_n.txt
- * Input files consist of the following instructions:
- * - RD <address>
- * - WR <address> <val>
- */
-
 byte * memory;
 
-// Decode instruction lines
 decoded decode_inst_line(char * buffer){
     decoded inst;
-    char inst_type[2];
+    char inst_type[3];
     sscanf(buffer, "%s", inst_type);
     if(!strcmp(inst_type, "RD")){
         inst.type = 0;
@@ -55,7 +45,6 @@ decoded decode_inst_line(char * buffer){
     return inst;
 }
 
-// Helper function to print the cachelines
 void print_cachelines(cache * c, int cache_size){
     for(int i = 0; i < cache_size; i++){
         cache cacheline = *(c+i);
@@ -63,59 +52,69 @@ void print_cachelines(cache * c, int cache_size){
     }
 }
 
-
-// This function implements the mock CPU loop that reads and writes data.
-void cpu_loop(int num_threads){
-    // Initialize a CPU level cache that holds about 2 bytes of data.
+void cpu_loop(int thread_num, int num_threads){
     int cache_size = 2;
     cache * c = (cache *) malloc(sizeof(cache) * cache_size);
+    if (c == NULL) {
+        printf("Memory allocation failed.\n");
+        return;
+    }
     
-    // Read Input file
-    FILE * inst_file = fopen("input_0.txt", "r");
+    char filename[20];
+    sprintf(filename, "input_%d.txt", thread_num);
+    FILE * inst_file = fopen(filename, "r");
+    if (inst_file == NULL) {
+        printf("Failed to open file: %s\n", filename);
+        free(c);
+        return;
+    }
+    
     char inst_line[20];
-    // Decode instructions and execute them.
     while (fgets(inst_line, sizeof(inst_line), inst_file)){
         decoded inst = decode_inst_line(inst_line);
-        /*
-         * Cache Replacement Algorithm
-         */
-        int hash = inst.address%cache_size;
-        cache cacheline = *(c+hash);
-        /*
-         * This is where you will implement the coherancy check.
-         * For now, we will simply grab the latest data from memory.
-         */
+        
+        int hash = inst.address % cache_size;
+        cache cacheline = *(c + hash);
+        
         if(cacheline.address != inst.address){
-            // Flush current cacheline to memory
-            *(memory + cacheline.address) = cacheline.value;
-            // Assign new cacheline
+            #pragma omp critical
+            {
+                *(memory + cacheline.address) = cacheline.value;
+            }
             cacheline.address = inst.address;
             cacheline.state = -1;
-            // This is where it reads value of the address from memory
             cacheline.value = *(memory + inst.address);
             if(inst.type == 1){
                 cacheline.value = inst.value;
             }
-            *(c+hash) = cacheline;
+            *(c + hash) = cacheline;
         }
+        
         switch(inst.type){
             case 0:
-                printf("Reading from address %d: %d\n", cacheline.address, cacheline.value);
+                printf("Thread %d: RD %d: %d\n", thread_num, cacheline.address, cacheline.value);
                 break;
             
             case 1:
-                printf("Writing to address %d: %d\n", cacheline.address, cacheline.value);
+                printf("Thread %d: WR %d: %d\n", thread_num, cacheline.address, cacheline.value);
                 break;
         }
     }
+    fclose(inst_file);
     free(c);
 }
 
-int main(int c, char * argv[]){
-    // Initialize Global memory
-    // Let's assume the memory module holds about 24 bytes of data.
+int main(int argc, char * argv[]){
     int memory_size = 24;
     memory = (byte *) malloc(sizeof(byte) * memory_size);
-    cpu_loop(1);
+    int num_threads = 2; // Adjust based on the number of input files available
+    
+    #pragma omp parallel num_threads(num_threads)
+    {
+        int thread_num = omp_get_thread_num();
+        cpu_loop(thread_num, num_threads);
+    }
+    
     free(memory);
+    return 0;
 }
